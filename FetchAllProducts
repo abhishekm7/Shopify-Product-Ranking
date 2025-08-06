@@ -1,0 +1,68 @@
+List all Products ==
+
+function fetchAllProducts() {
+  const shopifyToken = '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'; // Replace with your Shopify Access Token
+  const shopifyStoreUrl = 'mypochi.myshopify.com'; // Replace with your Shopify Store URL
+  const sheetName = 'All Products'; // The name of the sheet where data will be written
+
+  // Initialize Google Sheet
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName(sheetName);
+
+  // If the sheet does not exist, create it
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+  } else {
+    sheet.clear(); // Clear any existing content
+  }
+
+  // Set up headers for the sheet
+  sheet.appendRow(['Product ID', 'Product Name']);
+
+  // Pagination variables
+  let cursor = null;
+  let hasNextPage = true;
+
+  while (hasNextPage) {
+    let query = `
+    query GetProducts($cursor: String) {
+      products(first: 250, after: $cursor) {
+        edges {
+          node {
+            id
+            title
+          }
+          cursor
+        }
+        pageInfo {
+          hasNextPage
+        }
+      }
+    }`;
+
+    const url = `https://${shopifyStoreUrl}/admin/api/2023-07/graphql.json`;
+    const options = {
+      method: 'post',
+      headers: {
+        'X-Shopify-Access-Token': shopifyToken,
+        'Content-Type': 'application/json'
+      },
+      payload: JSON.stringify({ query: query, variables: { cursor: cursor } })
+    };
+
+    const response = UrlFetchApp.fetch(url, options);
+    const data = JSON.parse(response.getContentText());
+    const products = data.data.products.edges;
+
+    // Process each product and append to the sheet
+    products.forEach(product => {
+      const productId = product.node.id;
+      const productName = product.node.title;
+      sheet.appendRow([productId, productName]);
+    });
+
+    // Update pagination variables
+    hasNextPage = data.data.products.pageInfo.hasNextPage;
+    cursor = products.length > 0 ? products[products.length - 1].cursor : null;
+  }
+}
