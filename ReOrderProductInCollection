@@ -1,0 +1,194 @@
+Reorder Collection ==
+
+function updateShopifyCollection() {
+  const shopifyToken = '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'; // Replace with your Shopify Access Token
+  const shopifyStoreUrl = 'mypochi.myshopify.com'; // Replace with your Shopify Store URL
+  const collectionId = '481090011434'; // Replace with your Shopify Collection ID
+  const sheetName = 'All Products'; // The sheet containing product IDs and rankings
+
+  // Initialize Google Sheet
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  const data = sheet.getDataRange().getValues();
+
+  // Check if the collection has any products
+  if (isCollectionEmpty(collectionId, shopifyStoreUrl, shopifyToken)) {
+    Logger.log('Collection is empty. Adding products to the collection.');
+    addProductsToCollection(collectionId, data, shopifyStoreUrl, shopifyToken);
+  }
+
+  // Prepare data for the mutation
+  let moves = [];
+
+  for (let i = 1; i < data.length; i++) { // Start from 1 to skip headers
+    const productId = data[i][0]; // Product ID
+    const rank = data[i][2]; // Rank
+    moves.push(`{ id: "${productId}", newPosition: "${rank}" }`); // Ensure rank is treated as a string
+  }
+
+  const mutation = `
+    mutation {
+      collectionReorderProducts(id: "gid://shopify/Collection/${collectionId}", moves: [${moves.join(',')}]) {
+        job {
+          id
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const url = `https://${shopifyStoreUrl}/admin/api/2023-07/graphql.json`;
+  const options = {
+    method: 'post',
+    headers: {
+      'X-Shopify-Access-Token': shopifyToken,
+      'Content-Type': 'application/json'
+    },
+    payload: JSON.stringify({ query: mutation })
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    const result = JSON.parse(response.getContentText());
+    Logger.log(result); // Log the entire response for debugging
+
+    if (result.errors) {
+      Logger.log('GraphQL errors: ' + JSON.stringify(result.errors));
+      throw new Error('GraphQL errors occurred.');
+    }
+
+    if (result.data && result.data.collectionReorderProducts) {
+      if (result.data.collectionReorderProducts.userErrors.length > 0) {
+        Logger.log('User errors: ' + JSON.stringify(result.data.collectionReorderProducts.userErrors));
+        throw new Error('User errors occurred during collection reordering.');
+      } else {
+        Logger.log('Collection reordering started with job ID: ' + result.data.collectionReorderProducts.job.id);
+        logExecutionTime();
+      }
+    } else {
+      throw new Error('Unexpected API response structure: ' + JSON.stringify(result));
+    }
+  } catch (error) {
+    Logger.log('Error: ' + error.message);
+    throw new Error('Failed to reorder collection: ' + error.message);
+  }
+}
+
+// Function to check if the collection is empty
+function isCollectionEmpty(collectionId, shopifyStoreUrl, shopifyToken) {
+  const query = `
+    query {
+      collection(id: "gid://shopify/Collection/${collectionId}") {
+        products(first: 1) {
+          edges {
+            node {
+              id
+            }
+          }
+        }
+      }
+    }
+  `;
+  const url = `https://${shopifyStoreUrl}/admin/api/2023-07/graphql.json`;
+  const options = {
+    method: 'post',
+    headers: {
+      'X-Shopify-Access-Token': shopifyToken,
+      'Content-Type': 'application/json'
+    },
+    payload: JSON.stringify({ query: query })
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    const result = JSON.parse(response.getContentText());
+    Logger.log(result);
+
+    return result.data.collection.products.edges.length === 0;
+  } catch (error) {
+    Logger.log('Error checking collection: ' + error.message);
+    throw new Error('Failed to check collection: ' + error.message);
+  }
+}
+
+// Function to add products to a collection
+function addProductsToCollection(collectionId, data, shopifyStoreUrl, shopifyToken) {
+  let productIds = [];
+  for (let i = 1; i < data.length; i++) { // Start from 1 to skip headers
+    const productId = data[i][0]; // Product ID
+    productIds.push(`"gid://shopify/Product/${productId.split("/").pop()}"`); // Ensure proper product ID format
+  }
+
+  const mutation = `
+    mutation {
+      collectionAddProducts(id: "gid://shopify/Collection/${collectionId}", productIds: [${productIds.join(',')}]) {
+        collection {
+          id
+          title
+          products(first: 5) {
+            nodes {
+              id
+              title
+            }
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const url = `https://${shopifyStoreUrl}/admin/api/2023-07/graphql.json`;
+  const options = {
+    method: 'post',
+    headers: {
+      'X-Shopify-Access-Token': shopifyToken,
+      'Content-Type': 'application/json'
+    },
+    payload: JSON.stringify({ query: mutation })
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(url, options);
+    const result = JSON.parse(response.getContentText());
+    Logger.log(result); // Log the entire response for debugging
+
+    if (result.errors) {
+      Logger.log('GraphQL errors: ' + JSON.stringify(result.errors));
+      throw new Error('GraphQL errors occurred.');
+    }
+
+    if (result.data && result.data.collectionAddProducts) {
+      if (result.data.collectionAddProducts.userErrors.length > 0) {
+        Logger.log('User errors: ' + JSON.stringify(result.data.collectionAddProducts.userErrors));
+        throw new Error('User errors occurred during product addition.');
+      } else {
+        Logger.log('Products added to collection: ' + result.data.collectionAddProducts.collection.title);
+      }
+    } else {
+      throw new Error('Unexpected API response structure: ' + JSON.stringify(result));
+    }
+  } catch (error) {
+    Logger.log('Error: ' + error.message);
+    throw new Error('Failed to add products to collection: ' + error.message);
+  }
+}
+
+// Helper function to log execution time
+function logExecutionTime() {
+  const logSheetName = 'Execution Log';
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let logSheet = ss.getSheetByName(logSheetName);
+
+  if (!logSheet) {
+    logSheet = ss.insertSheet(logSheetName);
+  }
+
+  const now = new Date();
+  logSheet.appendRow([`Collection Reorder Run: ${Utilities.formatDate(now, Session.getScriptTimeZone(), 'dd-MM-yyyy HH:mm:ss')}`]);
+}
